@@ -18,8 +18,6 @@ import time
 import logging
 from typing import Dict, List, Optional
 
-import anthropic
-
 import config
 import prompts
 from retriever import CorpusRetriever
@@ -75,17 +73,114 @@ def _parse_json_response(text: str) -> Optional[Dict]:
     return None
 
 
+def _create_client():
+    """Create the appropriate API client based on the detected provider."""
+    if config.PROVIDER == "openrouter":
+        from openai import OpenAI
+        return OpenAI(
+            api_key=config.ANTHROPIC_API_KEY,
+            base_url=config.OPENROUTER_BASE_URL,
+        )
+    elif config.PROVIDER == "openai":
+        from openai import OpenAI
+        return OpenAI(api_key=config.ANTHROPIC_API_KEY)
+    else:
+        import anthropic
+        return anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+
+
 def _call_claude(
-    client: anthropic.Anthropic,
+    client,
     system: str,
     user_message: str,
     max_retries: int = 3,
     max_tokens: int = 1024,
 ) -> str:
     """
-    Call the Claude API with exponential backoff on failure.
-    Returns the text content of the first block in the response.
+    Call the LLM API with exponential backoff on failure.
+    Supports Anthropic, OpenRouter, and OpenAI backends.
     """
+    if config.PROVIDER == "openrouter":
+        return _call_openrouter(client, system, user_message, max_retries, max_tokens)
+    elif config.PROVIDER == "openai":
+        return _call_openai(client, system, user_message, max_retries, max_tokens)
+    else:
+        return _call_anthropic(client, system, user_message, max_retries, max_tokens)
+
+
+def _call_openai(client, system, user_message, max_retries, max_tokens):
+    """Call direct OpenAI API."""
+    last_exc = None
+    for attempt in range(max_retries):
+        try:
+            response = client.chat.completions.create(
+                model=config.MODEL,
+                max_tokens=max_tokens,
+                temperature=0,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user_message},
+                ],
+            )
+            return response.choices[0].message.content or ""
+        except Exception as exc:
+            last_exc = exc
+            wait = 2 ** attempt
+            logger.warning(
+                "API call failed (attempt %d/%d): %s. Retrying in %ds...",
+                attempt + 1, max_retries, exc, wait,
+            )
+            time.sleep(wait)
+
+    logger.error("All %d API retries exhausted.", max_retries)
+    raise last_exc
+
+
+def _call_openrouter(client, system, user_message, max_retries, max_tokens):
+    """Call OpenRouter API, trying fallback models if needed."""
+    models_to_try = [config.MODEL] + [
+        m for m in config.OPENROUTER_FALLBACK_MODELS if m != config.MODEL
+    ]
+
+    for model in models_to_try:
+        last_exc = None
+        for attempt in range(max_retries):
+            try:
+                response = client.chat.completions.create(
+                    model=model,
+                    max_tokens=max_tokens,
+                    temperature=0,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user_message},
+                    ],
+                )
+                # If we successfully used a different model, update config
+                if model != config.MODEL:
+                    logger.info("Switched to model: %s", model)
+                    config.MODEL = model
+                return response.choices[0].message.content or ""
+            except Exception as exc:
+                exc_str = str(exc)
+                # If model not found, skip retries and try next model
+                if "not a valid model" in exc_str or "not found" in exc_str.lower():
+                    logger.warning("Model %s not available, trying next...", model)
+                    last_exc = exc
+                    break
+                last_exc = exc
+                wait = 2 ** attempt
+                logger.warning(
+                    "API call failed (attempt %d/%d, model=%s): %s. Retrying in %ds...",
+                    attempt + 1, max_retries, model, exc, wait,
+                )
+                time.sleep(wait)
+
+    logger.error("All models and retries exhausted.")
+    raise last_exc
+
+
+def _call_anthropic(client, system, user_message, max_retries, max_tokens):
+    """Call direct Anthropic API."""
     last_exc = None
     for attempt in range(max_retries):
         try:
@@ -104,12 +199,12 @@ def _call_claude(
             last_exc = exc
             wait = 2 ** attempt
             logger.warning(
-                "Claude API call failed (attempt %d/%d): %s. Retrying in %ds...",
+                "API call failed (attempt %d/%d): %s. Retrying in %ds...",
                 attempt + 1, max_retries, exc, wait,
             )
             time.sleep(wait)
 
-    logger.error("All %d Claude API retries exhausted.", max_retries)
+    logger.error("All %d API retries exhausted.", max_retries)
     raise last_exc
 
 
@@ -138,7 +233,8 @@ class SupportAgent:
                 "ANTHROPIC_API_KEY environment variable is not set. "
                 "Set it with: export ANTHROPIC_API_KEY=your_key_here"
             )
-        self.client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+        self.client = _create_client()
+        logger.info("Using provider: %s (model: %s)", config.PROVIDER, config.MODEL)
         self.retriever = CorpusRetriever()
         logger.info(
             "SupportAgent initialized — %d corpus chunks indexed.",
@@ -166,9 +262,10 @@ class SupportAgent:
 
     def _process_ticket_safe(self, row: Dict) -> Dict:
         """Core ticket processing pipeline."""
-        issue = str(row.get("issue", "") or "").strip()
-        subject = str(row.get("subject", "") or "").strip()
-        stated_company = str(row.get("company", "") or "").strip()
+        # Handle both capitalized (from CSV) and lowercase keys
+        issue = str(row.get("Issue", row.get("issue", "")) or "").strip()
+        subject = str(row.get("Subject", row.get("subject", "")) or "").strip()
+        stated_company = str(row.get("Company", row.get("company", "")) or "").strip()
 
         # Step 1: Detect company
         company, company_conf = detect_company(issue, subject, stated_company)

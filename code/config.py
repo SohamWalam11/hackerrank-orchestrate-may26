@@ -24,9 +24,19 @@ SAMPLE_CSV = TICKETS_DIR / "sample_support_tickets.csv"
 OUTPUT_CSV = TICKETS_DIR / "output.csv"
 
 # ---------------------------------------------------------------------------
-# Claude model configuration
+# Model configuration
 # ---------------------------------------------------------------------------
-MODEL = "claude-sonnet-4-20250514"
+MODEL_ANTHROPIC = "claude-sonnet-4-20250514"
+MODEL_OPENROUTER = "anthropic/claude-sonnet-4"
+MODEL_OPENAI = "gpt-4o"
+
+# Fallback models in order of preference for OpenRouter
+OPENROUTER_FALLBACK_MODELS = [
+    "anthropic/claude-sonnet-4",
+    "anthropic/claude-sonnet-4.5",
+    "anthropic/claude-sonnet-4.6",
+    "anthropic/claude-3.7-sonnet",
+]
 
 # ---------------------------------------------------------------------------
 # Retrieval parameters
@@ -58,6 +68,26 @@ np.random.seed(SEED)
 # API keys — must be set as environment variables; never hardcode
 # ---------------------------------------------------------------------------
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+# Auto-detect provider from key format
+def _detect_provider():
+    key = ANTHROPIC_API_KEY
+    if key.startswith("sk-or-v1-"):
+        return "openrouter"
+    elif key.startswith("sk-ant-"):
+        return "anthropic"
+    elif key.startswith("sk-proj-") or key.startswith("sk-"):
+        return "openai"
+    return "none"
+
+PROVIDER = _detect_provider()
+if PROVIDER == "openrouter":
+    MODEL = MODEL_OPENROUTER
+elif PROVIDER == "openai":
+    MODEL = MODEL_OPENAI
+else:
+    MODEL = MODEL_ANTHROPIC
 
 # ---------------------------------------------------------------------------
 # Allowed output values (from problem_statement.md)

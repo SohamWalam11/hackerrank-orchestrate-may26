@@ -84,6 +84,10 @@ def _create_client():
     elif config.PROVIDER == "openai":
         from openai import OpenAI
         return OpenAI(api_key=config.ANTHROPIC_API_KEY)
+    elif config.PROVIDER == "gemini":
+        import google.generativeai as genai
+        genai.configure(api_key=config.ANTHROPIC_API_KEY)
+        return genai
     else:
         import anthropic
         return anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
@@ -98,14 +102,46 @@ def _call_claude(
 ) -> str:
     """
     Call the LLM API with exponential backoff on failure.
-    Supports Anthropic, OpenRouter, and OpenAI backends.
+    Supports Anthropic, OpenRouter, OpenAI, and Gemini backends.
     """
     if config.PROVIDER == "openrouter":
         return _call_openrouter(client, system, user_message, max_retries, max_tokens)
     elif config.PROVIDER == "openai":
         return _call_openai(client, system, user_message, max_retries, max_tokens)
+    elif config.PROVIDER == "gemini":
+        return _call_gemini(client, system, user_message, max_retries, max_tokens)
     else:
         return _call_anthropic(client, system, user_message, max_retries, max_tokens)
+
+
+def _call_gemini(client, system, user_message, max_retries, max_tokens):
+    """Call direct Google Gemini API."""
+    last_exc = None
+    for attempt in range(max_retries):
+        try:
+            model = client.GenerativeModel(
+                model_name=config.MODEL,
+                system_instruction=system
+            )
+            response = model.generate_content(
+                user_message,
+                generation_config=client.types.GenerationConfig(
+                    temperature=0.0,
+                    max_output_tokens=max_tokens,
+                )
+            )
+            return response.text
+        except Exception as exc:
+            last_exc = exc
+            wait = 2 ** attempt
+            logger.warning(
+                "API call failed (attempt %d/%d): %s. Retrying in %ds...",
+                attempt + 1, max_retries, exc, wait,
+            )
+            time.sleep(wait)
+
+    logger.error("All %d API retries exhausted.", max_retries)
+    raise last_exc
 
 
 def _call_openai(client, system, user_message, max_retries, max_tokens):

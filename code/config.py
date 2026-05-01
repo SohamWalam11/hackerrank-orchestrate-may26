@@ -29,6 +29,7 @@ OUTPUT_CSV = TICKETS_DIR / "output.csv"
 MODEL_ANTHROPIC = "claude-sonnet-4-20250514"
 MODEL_OPENROUTER = "anthropic/claude-sonnet-4"
 MODEL_OPENAI = "gpt-4o"
+MODEL_GEMINI = "gemini-2.5-flash"
 
 # Fallback models in order of preference for OpenRouter
 OPENROUTER_FALLBACK_MODELS = [
@@ -79,6 +80,8 @@ def _detect_provider():
         return "anthropic"
     elif key.startswith("sk-proj-") or key.startswith("sk-"):
         return "openai"
+    elif key.startswith("AIza"):
+        return "gemini"
     return "none"
 
 PROVIDER = _detect_provider()
@@ -86,6 +89,8 @@ if PROVIDER == "openrouter":
     MODEL = MODEL_OPENROUTER
 elif PROVIDER == "openai":
     MODEL = MODEL_OPENAI
+elif PROVIDER == "gemini":
+    MODEL = MODEL_GEMINI
 else:
     MODEL = MODEL_ANTHROPIC
 

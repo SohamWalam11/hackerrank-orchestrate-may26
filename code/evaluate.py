@@ -14,7 +14,6 @@ import argparse
 import logging
 import sys
 from pathlib import Path
-from collections import Counter
 
 import pandas as pd
 from tqdm import tqdm
@@ -27,8 +26,8 @@ except ImportError:
     pass
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import config
-from agent import SupportAgent
+import config  # pylint: disable=wrong-import-position
+from agent import SupportAgent  # pylint: disable=wrong-import-position
 
 logging.basicConfig(
     level=logging.INFO,
@@ -38,6 +37,7 @@ logger = logging.getLogger(__name__)
 
 
 def parse_args():
+    """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="Evaluate agent against sample tickets.")
     parser.add_argument("--verbose", action="store_true", help="Show per-ticket details.")
     return parser.parse_args()
@@ -108,7 +108,8 @@ def score_response_quality(predicted, expected, status_pred, status_exp):
     return min(1.0, jaccard * 2 + 0.2)
 
 
-def main():
+def main():  # pylint: disable=too-many-locals,too-many-statements
+    """Main evaluation routine."""
     args = parse_args()
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)

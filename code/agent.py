@@ -24,6 +24,7 @@ from retriever import CorpusRetriever
 from classifier import detect_company, classify_request_type, risk_score
 from escalation import should_escalate
 from validator import validate_output
+from discriminator import evaluate_response
 
 logger = logging.getLogger(__name__)
 
@@ -81,16 +82,15 @@ def _create_client():
             api_key=config.ANTHROPIC_API_KEY,
             base_url=config.OPENROUTER_BASE_URL,
         )
-    elif config.PROVIDER == "openai":
+    if config.PROVIDER == "openai":
         from openai import OpenAI
         return OpenAI(api_key=config.ANTHROPIC_API_KEY)
-    elif config.PROVIDER == "gemini":
+    if config.PROVIDER == "gemini":
         import google.generativeai as genai
         genai.configure(api_key=config.ANTHROPIC_API_KEY)
         return genai
-    else:
-        import anthropic
-        return anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+    import anthropic
+    return anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
 
 
 def _call_claude(
@@ -106,12 +106,11 @@ def _call_claude(
     """
     if config.PROVIDER == "openrouter":
         return _call_openrouter(client, system, user_message, max_retries, max_tokens)
-    elif config.PROVIDER == "openai":
+    if config.PROVIDER == "openai":
         return _call_openai(client, system, user_message, max_retries, max_tokens)
-    elif config.PROVIDER == "gemini":
+    if config.PROVIDER == "gemini":
         return _call_gemini(client, system, user_message, max_retries, max_tokens)
-    else:
-        return _call_anthropic(client, system, user_message, max_retries, max_tokens)
+    return _call_anthropic(client, system, user_message, max_retries, max_tokens)
 
 
 def _call_gemini(client, system, user_message, max_retries, max_tokens):
@@ -353,6 +352,20 @@ class SupportAgent:
                 row, issue, subject, company, req_type, chunks
             )
 
+        # Step 7.5: Discriminator cross-verification
+        is_valid, final_response_text = evaluate_response(
+            self.client, _call_claude, _parse_json_response,
+            result.get("response", ""), issue, subject, company, chunks
+        )
+        if final_response_text:
+            result["response"] = final_response_text
+        
+        justification_msg = "Response failed discriminator QA check for hallucinations or accuracy."
+        if not is_valid and result["status"] != "escalated":
+            # If the discriminator still failed it, escalate if not already escalated
+            result["status"] = "escalated"
+            result["justification"] = justification_msg
+
         # Step 8: Validate
         result = validate_output(result, chunks)
 
@@ -367,6 +380,7 @@ class SupportAgent:
         company: str, req_type: str, chunks: List[Dict],
     ) -> Dict:
         """Generate an auto-reply using Claude."""
+        _ = row
         corpus_context = self._build_corpus_context(chunks)
 
         user_msg = prompts.REPLY_PROMPT.format(
@@ -385,7 +399,9 @@ class SupportAgent:
                     "status": "replied",
                     "product_area": parsed.get("product_area", "general_support"),
                     "response": parsed["response"],
-                    "justification": parsed.get("justification", "Response grounded in corpus excerpts."),
+                    "justification": parsed.get(
+                        "justification", "Response grounded in corpus excerpts."
+                    ),
                     "request_type": req_type,
                 }
         except Exception as exc:
@@ -402,6 +418,8 @@ class SupportAgent:
         esc_reason: str, req_type: str,
     ) -> Dict:
         """Generate an escalation message using Claude."""
+        _ = row
+        _ = risk
         corpus_context = self._build_corpus_context(chunks)
 
         user_msg = prompts.ESCALATE_PROMPT.format(
@@ -444,6 +462,10 @@ class SupportAgent:
         company: str, chunks: List[Dict],
     ) -> Dict:
         """Handle clearly invalid or out-of-scope tickets."""
+        _ = row
+        _ = subject
+        _ = company
+        _ = chunks
         # Check if it's a simple greeting/thank you
         lower = issue.lower()
         greetings = ["thank", "thanks", "happy to help", "bye", "goodbye"]
@@ -519,7 +541,6 @@ class SupportAgent:
         req_type: str = "product_issue",
     ) -> Dict:
         """Return a safe escalation dict that never crashes the batch."""
-        stated = str(row.get("company", "") or "Unknown")
         return {
             "status": "escalated",
             "product_area": "general_support",

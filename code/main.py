@@ -23,10 +23,19 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-# Load .env before importing config
+# Load .env before importing config (fall back to .env.example)
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    from pathlib import Path as _P
+    _project_root = _P(__file__).resolve().parent.parent
+    _env_file = _project_root / ".env"
+    _env_example = _project_root / ".env.example"
+    if _env_file.exists():
+        load_dotenv(_env_file)
+    elif _env_example.exists():
+        load_dotenv(_env_example)
+    else:
+        load_dotenv()  # try default locations
 except ImportError:
     pass
 

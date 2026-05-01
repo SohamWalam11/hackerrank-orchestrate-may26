@@ -42,9 +42,9 @@ OPENROUTER_FALLBACK_MODELS = [
 # ---------------------------------------------------------------------------
 # Retrieval parameters
 # ---------------------------------------------------------------------------
-TOP_K_CHUNKS = 8          # number of chunks returned per query
-CHUNK_SIZE = 800          # characters per chunk (larger = more context)
-CHUNK_OVERLAP = 200       # overlap between consecutive chunks
+TOP_K_CHUNKS = 12         # number of chunks returned per query (increased for better accuracy)
+CHUNK_SIZE = 1000         # characters per chunk (larger = more context)
+CHUNK_OVERLAP = 250       # overlap between consecutive chunks
 MIN_CHUNK_LENGTH = 50     # discard chunks shorter than this
 
 # BM25 / TF-IDF fusion weight — higher means BM25 is weighted more

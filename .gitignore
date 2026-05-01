@@ -1,8 +1,10 @@
 # secrets
 .env
 .env.local
+.env.example
 *.pem
 *.key
+test_smoke.py
 
 # deps
 node_modules/
